@@ -1,15 +1,15 @@
 AWSTemplateFormatVersion: 2010-09-09
 Transform:
 - AWS::Serverless-2016-10-31
-- AWS::CodeStar
 
 Parameters:
   ProjectId:
     Type: String
-    Description: AWS CodeStar projectID used to associate new resources to team members
-  CodeDeployRole:
+    Default: 'template-lambda-devops'
+    Description: ProjectID used to associate new resources to team members
+  CodeVersion:
     Type: String
-    Description: IAM role to allow AWS CodeDeploy to manage deployment of AWS Lambda functions
+    Description: SemVer to deploy
   Stage:
     Type: String
     Description: The name for a project pipeline stage, such as Staging or Prod, for which resources are provisioned and deployed.
@@ -21,15 +21,23 @@ Globals:
     DeploymentPreference:
       Enabled: true
       Type: Canary10Percent5Minutes
-      Role: !Ref CodeDeployRole
+      Alarms:
+        # A list of alarms that you want to monitor
+        - !Ref GetHelloWorldMetricGreaterThanZeroAlarm
+        - !Ref PostHelloWorldMetricGreaterThanZeroAlarm
 
 Resources:
+  # GET Hello World
   GetHelloWorld:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub 'awscodestar-${ProjectId}-lambda-GetHelloWorld'
-      Handler: index.get
-      Runtime: nodejs12.x
+      FunctionName: !Sub '${ProjectId}-GetHelloWorld'
+      CodeUri:
+        Bucket: 'template-lambda-devops'
+        Key: !Sub 'handlers/get/${CodeVersion}.zip'
+      VersionDescription: !Ref CodeVersion
+      Handler: get.handler
+      Runtime: nodejs14.x
       Role:
         Fn::GetAtt:
         - LambdaExecutionRole
@@ -40,11 +48,65 @@ Resources:
           Properties:
             Path: /
             Method: get
+  GetHelloWorldMetricGreaterThanZeroAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: GetHelloWorld
+    Properties:
+      AlarmName: !Sub '${ProjectId}-lambda-${GetHelloWorld}'
+      AlarmDescription: "pre-deployment alarm to check for errors in the function"
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref GetHelloWorld
+      EvaluationPeriods: 1
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: '60'
+      Statistic: Sum
+      Threshold: '1'
+  # POST Hello World
+  PostHelloWorld:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub '${ProjectId}-PostHelloWorld'
+      CodeUri:
+        Bucket: 'template-lambda-devops'
+        Key: !Sub 'handlers/post/${CodeVersion}.zip'
+      VersionDescription: !Ref CodeVersion
+      Handler: post.handler
+      Runtime: nodejs14.x
+      Role:
+        Fn::GetAtt:
+        - LambdaExecutionRole
+        - Arn
+      Events:
+        GetEvent:
+          Type: Api
+          Properties:
+            Path: /
+            Method: post
+  PostHelloWorldMetricGreaterThanZeroAlarm:
+    Type: AWS::CloudWatch::Alarm
+    DependsOn: PostHelloWorld
+    Properties:
+      AlarmName: !Sub '${ProjectId}-lambda-${PostHelloWorld}'
+      AlarmDescription: "pre-deployment alarm to check for errors in the function"
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PostHelloWorld
+      EvaluationPeriods: 1
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Period: '60'
+      Statistic: Sum
+      Threshold: '1'
+  # Roles
   LambdaExecutionRole:
     Description: Creating service role in IAM for AWS Lambda
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub 'CodeStar-${ProjectId}-Execution${Stage}'
+      RoleName: !Sub '${ProjectId}-Execution${Stage}'
       AssumeRolePolicyDocument:
         Statement:
         - Effect: Allow
@@ -54,4 +116,4 @@ Resources:
       Path: /
       ManagedPolicyArns:
         - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
-      PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/CodeStar_${ProjectId}_PermissionsBoundary'
+      # PermissionsBoundary: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/${ProjectId}_PermissionsBoundary'
